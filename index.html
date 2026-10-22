@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -82,7 +82,7 @@
 <body>
 <div id="app">
   <aside id="panel">
-    <h1>热力学绘图板 <small>CAD v5.9</small></h1>
+    <h1>热力学绘图板 <small>CAD v6.0</small></h1>
 
     <details class="grp">
       <summary>坐标轴</summary>
@@ -553,9 +553,9 @@ window.addEventListener("error", function (e) {
         const along = Math.hypot(px - asx, py - asy);               // 光标到这些标的屏幕距离
         if (along > 900) continue;                                  // 太远的不参与，免得抢走近处端点
         const dxa = Math.abs(px - asx);
-        if (dxa <= TH && !sameX) cand.push({ x: ax, y: wy, type: "对齐x", score: dxa + BONUS["对齐x"] + along * 0.02, ref: [[ax, ay]] });
+        if (dxa <= TH && !sameX) cand.push({ x: ax, y: wy, type: "对齐x", axis: "x", score: dxa + BONUS["对齐x"] + along * 0.02, ref: [[ax, ay]] });
         const dya = Math.abs(py - asy);
-        if (dya <= TH && !sameY) cand.push({ x: wx, y: ay, type: "对齐y", score: dya + BONUS["对齐y"] + along * 0.02, ref: [[ax, ay]] });
+        if (dya <= TH && !sameY) cand.push({ x: wx, y: ay, type: "对齐y", axis: "y", score: dya + BONUS["对齐y"] + along * 0.02, ref: [[ax, ay]] });
       }
     }
 
@@ -565,14 +565,43 @@ window.addEventListener("error", function (e) {
       const gx = S.guide.x, gy = S.guide.y;
       const [gsx] = w2s(gx, 0);
       const dxg = Math.abs(px - gsx);
-      if (dxg <= GT) cand.push({ x: gx, y: wy, type: "基准x", score: dxg + BONUS["基准x"] });
+      if (dxg <= GT) cand.push({ x: gx, y: wy, type: "基准x", axis: "x", score: dxg + BONUS["基准x"] });
       const [, gsy] = w2s(0, gy);
       const dyg = Math.abs(py - gsy);
-      if (dyg <= GT) cand.push({ x: wx, y: gy, type: "基准y", score: dyg + BONUS["基准y"] });
+      if (dyg <= GT) cand.push({ x: wx, y: gy, type: "基准y", axis: "y", score: dyg + BONUS["基准y"] });
     }
 
     cand.sort((a, b) => a.score - b.score);
     let best = cand[0] || null;
+
+    // 双约束合并：一条只定 x、另一条只定 y 时，合成一个点
+    // （例如"起点竖直基准" × "别的点的水平对齐" → 两根线一起吸）
+    if (best && best.axis) {
+      const other = cand.find(c => c.axis && c.axis !== best.axis);
+      if (other) {
+        const gx = best.axis === "x" ? best : other;
+        const gy = best.axis === "y" ? best : other;
+        best = {
+          x: gx.x, y: gy.y,
+          type: gx.type + "+" + gy.type,
+          score: Math.min(best.score, other.score) - 0.5,
+          gx: true, gy: true,
+          bx: gx.type === "基准x", by: gy.type === "基准y",
+          refX: gx.ref || null, refY: gy.ref || null,
+          ref: null, owner: null
+        };
+      } else {
+        const isX = best.axis === "x";
+        best = {
+          x: best.x, y: best.y, type: best.type, score: best.score,
+          gx: isX, gy: !isX,
+          bx: isX && best.type === "基准x", by: !isX && best.type === "基准y",
+          refX: isX ? (best.ref || null) : null,
+          refY: isX ? null : (best.ref || null),
+          ref: null, owner: best.owner || null
+        };
+      }
+    }
 
     // 迟滞：上一步已经吸住的目标，只要还在附近、且没被明显更好的候选压过，就保持不变
     if (S.lastSnap) {
@@ -580,12 +609,28 @@ window.addEventListener("error", function (e) {
       const dl = dist(px, py, lx, ly);
       const ls = dl + bonusOf(S.lastSnap.type);
       if (dl <= TH * 1.35 && (!best || ls <= best.score + 2.5)) {
-        best = { x: S.lastSnap.x, y: S.lastSnap.y, type: S.lastSnap.type, ref: S.lastSnap.ref || null, owner: S.lastSnap.owner || null };
+        best = {
+          x: S.lastSnap.x, y: S.lastSnap.y, type: S.lastSnap.type,
+          ref: S.lastSnap.ref || null, owner: S.lastSnap.owner || null,
+          gx: S.lastSnap.gx, gy: S.lastSnap.gy,
+          bx: S.lastSnap.bx, by: S.lastSnap.by,
+          refX: S.lastSnap.refX || null, refY: S.lastSnap.refY || null
+        };
       }
     }
-    S.lastSnap = best ? { x: best.x, y: best.y, type: best.type, ref: best.ref || null, owner: best.owner || null } : null;
+    S.lastSnap = best ? {
+      x: best.x, y: best.y, type: best.type,
+      ref: best.ref || null, owner: best.owner || null,
+      gx: best.gx, gy: best.gy, bx: best.bx, by: best.by,
+      refX: best.refX || null, refY: best.refY || null
+    } : null;
 
-    if (best) return { x: best.x, y: best.y, type: best.type, ref: best.ref || null, owner: best.owner || null };
+    if (best) return {
+      x: best.x, y: best.y, type: best.type,
+      ref: best.ref || null, owner: best.owner || null,
+      gx: best.gx, gy: best.gy, bx: best.bx, by: best.by,
+      refX: best.refX || null, refY: best.refY || null
+    };
 
     if ($("snap-grid").checked) {
       const st = parseFloat($("snapstep").value) || 0.5;
@@ -733,25 +778,30 @@ window.addEventListener("error", function (e) {
       ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
       ctx.restore();
     }
-    // 对照线：只给"有参照对象"的吸附画（对齐 / 垂足）；线上、端点这类普通吸附不加噪
-    if (S.hover && (S.hover.type === "对齐x" || S.hover.type === "对齐y" || S.hover.type === "垂足")) {
+    // 对照线：只给"有参照对象"的吸附画（对齐 / 垂足 / 双约束）；线上、端点这类普通吸附不加噪
+    if (S.hover && (S.hover.gx || S.hover.gy || S.hover.type === "垂足")) {
       const [hx, hy] = w2s(S.hover.x, S.hover.y);
+      const both = !!S.hover.type && S.hover.type === "垂足";
       ctx.save();
       ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2;
       ctx.strokeStyle = "rgba(240,136,62,.60)";
-      if (S.hover.type !== "对齐y") { ctx.beginPath(); ctx.moveTo(hx, 0); ctx.lineTo(hx, h); ctx.stroke(); }
-      if (S.hover.type !== "对齐x") { ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(w, hy); ctx.stroke(); }
-      const ref = S.hover.ref;
-      if (ref && ref.length === 1) {
-        // 参照点：画个环 + 一条从它到吸附点的细线
-        const [rx, ry] = w2s(ref[0][0], ref[0][1]);
+      if (S.hover.gx || both) { ctx.beginPath(); ctx.moveTo(hx, 0); ctx.lineTo(hx, h); ctx.stroke(); }
+      if (S.hover.gy || both) { ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(w, hy); ctx.stroke(); }
+      // 参照点（可能是两个：x 来源一个、y 来源一个）
+      const refs = [];
+      if (S.hover.refX && S.hover.refX.length === 1) refs.push(S.hover.refX[0]);
+      if (S.hover.refY && S.hover.refY.length === 1) refs.push(S.hover.refY[0]);
+      for (const r of refs) {
+        const [rx, ry] = w2s(r[0], r[1]);
         ctx.setLineDash([2, 3]);
         ctx.strokeStyle = "rgba(240,136,62,.85)";
         ctx.beginPath(); ctx.moveTo(rx, ry); ctx.lineTo(hx, hy); ctx.stroke();
         ctx.setLineDash([]);
         ctx.beginPath(); ctx.arc(rx, ry, 5.5, 0, Math.PI * 2); ctx.stroke();
         ctx.beginPath(); ctx.arc(rx, ry, 1.8, 0, Math.PI * 2); ctx.stroke();
-      } else if (ref && ref.length === 2) {
+      }
+      const ref = S.hover.ref;
+      if (ref && ref.length === 2) {
         // 参照线：把被垂的那条线整体提亮
         const [ax, ay] = w2s(ref[0][0], ref[0][1]);
         const [bx, by] = w2s(ref[1][0], ref[1][1]);
@@ -1406,7 +1456,7 @@ window.addEventListener("error", function (e) {
       if (!last || Math.hypot(x - last[0], y - last[1]) > 0.01) { S.stroke.push([x, y]); }
       // 端点会吸到哪里：实时提示（不改自由笔画本身）
       const sn = findSnap(px, py);
-      S.guideHit = sn.type === "基准x" ? "x" : sn.type === "基准y" ? "y" : null;
+      S.guideHit = sn.bx ? "x" : sn.by ? "y" : null;
       S.hover = sn.type ? sn : null;
       draw(); return;
     }
@@ -1444,7 +1494,7 @@ window.addEventListener("error", function (e) {
     if (S.mode === "point" || S.mode === "construct" || S.mode === "line") {
       const hp = findSnap(px, py);
       S.hover = hp;
-      S.guideHit = hp.type === "基准x" ? "x" : hp.type === "基准y" ? "y" : null;
+      S.guideHit = hp.bx ? "x" : hp.by ? "y" : null;
       draw();
     } else if (S.hover) { S.hover = null; draw(); }
   });
@@ -1620,11 +1670,11 @@ window.addEventListener("error", function (e) {
     const dx = end[0] - start[0], dy = end[1] - start[1];
 
     // 弱吸附到起点的横/纵基准线：直接落成精确的水平 / 竖直线段（只对"直线"拟合生效）
-    if (mode === "line" && startSnap && (endSnap.type === "基准x" || endSnap.type === "基准y")) {
+    if (mode === "line" && startSnap && (endSnap.bx || endSnap.by)) {
       const A = [startSnap.x, startSnap.y];
-      const B = endSnap.type === "基准x" ? [A[0], endSnap.y] : [endSnap.x, A[1]];
+      const B = endSnap.bx ? [A[0], endSnap.y] : [endSnap.x, A[1]];
       if (Math.hypot(B[0] - A[0], B[1] - A[1]) > 1e-9) {
-        const vertical = endSnap.type === "基准x";
+        const vertical = !!endSnap.bx && !endSnap.by;
         S.shapes.push({
           kind: "seg", x1: A[0], y1: A[1], x2: B[0], y2: B[1],
           fit: vertical ? { m: null, b: null, r2: 1 } : { m: 0, b: A[1], r2: 1 },
